@@ -8,25 +8,35 @@ const PERIODS = [
   { key: "1y", label: "1년" },
 ];
 
+const parseYahooResponse = (d) => {
+  const res = d.chart?.result?.[0];
+  if (!res) return null;
+  const ts = res.timestamp || [];
+  const closes = res.indicators?.quote?.[0]?.close || [];
+  const current = res.meta?.regularMarketPrice;
+  const points = ts.map((t, i) => ({ ts: t * 1000, close: closes[i] })).filter(p => p.close != null);
+  if (points.length === 0) return null;
+  return { current, points };
+};
+
 const fetchData = async (symbol, range) => {
   const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=1d&includePrePost=false`;
-  const proxies = [
+  const urls = [
+    // 1) Vercel serverless proxy (works on Vercel deployment)
+    `/api/yahoo?symbol=${encodeURIComponent(symbol)}&range=${encodeURIComponent(range)}`,
+    // 2) Direct Yahoo (works on localhost / some envs)
     yahooUrl,
+    // 3) CORS proxies (fallback for Claude artifacts etc.)
     `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
     `https://corsproxy.io/?url=${encodeURIComponent(yahooUrl)}`,
   ];
-  for (const url of proxies) {
+  for (const url of urls) {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
       if (!r.ok) continue;
       const d = await r.json();
-      const res = d.chart?.result?.[0];
-      if (!res) continue;
-      const ts = res.timestamp || [];
-      const closes = res.indicators?.quote?.[0]?.close || [];
-      const current = res.meta?.regularMarketPrice;
-      const points = ts.map((t, i) => ({ ts: t * 1000, close: closes[i] })).filter(p => p.close != null);
-      return { current, points };
+      const parsed = parseYahooResponse(d);
+      if (parsed) return parsed;
     } catch { continue; }
   }
   return null;
